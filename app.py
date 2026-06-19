@@ -101,57 +101,59 @@ if user_input := st.chat_input("Ex: Quels sont les effets secondaires du Paracé
         with st.spinner("Analyse clinique en cours..."):
             start_time = time.perf_counter()
             try:
-                # 1. On prépare les éléments du message ACTUEL
-                # Si une image est chargée, on met l'image ET le texte dans la requête actuelle
+                # 1. Préparation du contenu actuel (Multimodal ou Texte seul)
                 if image_pil:
                     contenu_requete = [image_pil, user_input]
                 else:
                     contenu_requete = user_input
 
-                # 2. On configure l'historique de chat de l'API (uniquement du texte !)
-                # On filtre pour ne prendre que les messages passés (sans le tout dernier qu'on vient d'ajouter)
+                # 2. Filtrage et reconstruction de l'historique (Texte pur pour la mémoire de l'API)
                 historique_api = []
                 for msg in st.session_state.messages[:-1]:
                     role_gemini = "model" if msg["role"] == "assistant" else msg["role"]
                     historique_api.append(
                         types.Content(
                             role=role_gemini,
-                            parts=[types.Part.from_text(text=msg["content"])]
+                            parts=[types.Part.from_text(text=str(msg["content"]))]
                         )
                     )
 
-                # 3. On utilise l'outil de Chat natif de Gemini qui gère la mémoire proprement
+                # 3. Initialisation de la session de chat native Gemini
                 chat = client.chats.create(
                     model=model_id,
                     history=historique_api,
                     config=types.GenerateContentConfig(
                         system_instruction=PROMPT_SYSTEME,
-                        temperature=0.2, # Bas pour éviter les hallucinations médicales
+                        temperature=0.2,
                         max_output_tokens=800
                     )
                 )
                 
-                # Envoi du message actuel (qui contient potentiellement l'image)
+                # 4. Envoi de la requête réseau
                 response = chat.send_message(contenu_requete)
                 
-                inference_time = time.perf_counter() - start_time
-                answer = response.text
+                # 5. Extraction sécurisée du texte brut pour éliminer les bugs d'affichage
+                answer = str(response.text)
                 
-                # Affichage et sauvegarde du résultat
-                st.write(answer)
+                # Affichage propre dans Streamlit
+                st.markdown(answer)
+                
+                # Sauvegarde dans la session utilisateur
                 st.session_state.messages.append({"role": "assistant", "content": answer})
                 
-                # Enregistrement des données pour les graphiques
+                # Enregistrement des données de performance pour ton onglet Dashboard
+                inference_time = time.perf_counter() - start_time
                 st.session_state.stats_temps.append(inference_time)
                 if response.usage_metadata:
                     st.session_state.stats_tokens.append(response.usage_metadata.total_token_count)
                 
-                # Bandeau de performance sous le message
+                # Bandeau d'information technique
                 st.markdown("---")
                 st.caption(f"⏱️ Réponse générée en {inference_time:.2f}s avec {model_id}")
                 
             except Exception as e:
                 st.error(f"Une erreur est survenue lors de l'analyse : {e}")
+                
 # --- ONGLET 2 : ANALYSE COMPARATIVE & KPI (POUR LE RAPPORT M2) ---
 with tab_dashboard:
     st.markdown("### 📊 Statistiques de performance en direct (Approche 1)")
