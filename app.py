@@ -90,59 +90,68 @@ with tab_chat:
             with st.chat_message(msg["role"]):
                 st.write(msg["content"])
 
-    # Zone d'interaction principale
-    if user_input := st.chat_input("Ex: Quels sont les effets secondaires du Paracétamol ?"):
-        with st.chat_message("user"):
-            st.write(user_input)
-        
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        
-        with st.chat_message("assistant"):
-            with st.spinner("Analyse clinique en cours..."):
-                start_time = time.perf_counter()
-                try:
-                    # Reconstruction de l'historique au format attendu par Gemini 2.5
-                    api_contents = []
-                    for msg in st.session_state.messages:
-                        role = "model" if msg["role"] == "assistant" else msg["role"]
-                        api_contents.append(
-                            types.Content(
-                                role=role,
-                                parts=[types.Part.from_text(text=msg["content"])]
-                            )
-                        )
-                    
-                    # Injection de l'image de la sidebar si présente
-                    if image_pil:
-                        api_contents[-1].parts.append(image_pil)
-                    
-                    # Appel de l'API
-                    response = client.models.generate_content(
-                        model=model_id,
-                        contents=api_contents,
-                        config=types.GenerateContentConfig(
-                            temperature=0.2, # Très bas pour éviter les inventions médicales
-                            max_output_tokens=800
+# --- ZONE D'INTERACTION PRINCIPALE ---
+if user_input := st.chat_input("Ex: Quels sont les effets secondaires du Paracétamol ?"):
+    with st.chat_message("user"):
+        st.write(user_input)
+    
+    st.session_state.messages.append({"role": "user", "content": user_input})
+    
+    with st.chat_message("assistant"):
+        with st.spinner("Analyse clinique en cours..."):
+            start_time = time.perf_counter()
+            try:
+                # 1. On prépare les éléments du message ACTUEL
+                # Si une image est chargée, on met l'image ET le texte dans la requête actuelle
+                if image_pil:
+                    contenu_requete = [image_pil, user_input]
+                else:
+                    contenu_requete = user_input
+
+                # 2. On configure l'historique de chat de l'API (uniquement du texte !)
+                # On filtre pour ne prendre que les messages passés (sans le tout dernier qu'on vient d'ajouter)
+                historique_api = []
+                for msg in st.session_state.messages[:-1]:
+                    role_gemini = "model" if msg["role"] == "assistant" else msg["role"]
+                    historique_api.append(
+                        types.Content(
+                            role=role_gemini,
+                            parts=[types.Part.from_text(text=msg["content"])]
                         )
                     )
-                    
-                    inference_time = time.perf_counter() - start_time
-                    answer = response.text
-                    
-                    st.write(answer)
-                    st.session_state.messages.append({"role": "assistant", "content": answer})
-                    
-                    # Enregistrement des données pour les graphiques
-                    st.session_state.stats_temps.append(inference_time)
-                    if response.usage_metadata:
-                        st.session_state.stats_tokens.append(response.usage_metadata.total_token_count)
-                    
-                    # Petit bandeau de performance rapide sous le message
-                    st.caption(f"⏱️ Réponse générée en {inference_time:.2f}s avec {model_id}")
-                    
-                except Exception as e:
-                    st.error(f"Une erreur est survenue lors de l'analyse : {e}")
 
+                # 3. On utilise l'outil de Chat natif de Gemini qui gère la mémoire proprement
+                chat = client.chats.create(
+                    model=model_id,
+                    history=historique_api,
+                    config=types.GenerateContentConfig(
+                        system_instruction=PROMPT_SYSTEME,
+                        temperature=0.2, # Bas pour éviter les hallucinations médicales
+                        max_output_tokens=800
+                    )
+                )
+                
+                # Envoi du message actuel (qui contient potentiellement l'image)
+                response = chat.send_message(contenu_requete)
+                
+                inference_time = time.perf_counter() - start_time
+                answer = response.text
+                
+                # Affichage et sauvegarde du résultat
+                st.write(answer)
+                st.session_state.messages.append({"role": "assistant", "content": answer})
+                
+                # Enregistrement des données pour les graphiques
+                st.session_state.stats_temps.append(inference_time)
+                if response.usage_metadata:
+                    st.session_state.stats_tokens.append(response.usage_metadata.total_token_count)
+                
+                # Bandeau de performance sous le message
+                st.markdown("---")
+                st.caption(f"⏱️ Réponse générée en {inference_time:.2f}s avec {model_id}")
+                
+            except Exception as e:
+                st.error(f"Une erreur est survenue lors de l'analyse : {e}")
 # --- ONGLET 2 : ANALYSE COMPARATIVE & KPI (POUR LE RAPPORT M2) ---
 with tab_dashboard:
     st.markdown("### 📊 Statistiques de performance en direct (Approche 1)")
